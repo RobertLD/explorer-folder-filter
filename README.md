@@ -2,7 +2,7 @@
 
 Explorer Folder Filter temporarily focuses the native VS Code Explorer on folders whose names match a query.
 
-It is useful in large workspaces where the folder tree is correct but too broad to scan quickly.
+It is useful in large workspaces where the folder tree is too broad to scan quickly.
 
 ## Commands
 
