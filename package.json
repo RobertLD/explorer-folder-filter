@@ -1,0 +1,61 @@
+{
+  "name": "explorer-folder-filter",
+  "displayName": "Explorer Folder Filter",
+  "description": "Temporarily focus the native VS Code Explorer on matching folders.",
+  "version": "0.0.1",
+  "publisher": "RobertLD",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:explorerFilter.focus",
+    "onCommand:explorerFilter.clear"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "explorerFilter.focus",
+        "title": "Focus Folder: Filter"
+      },
+      {
+        "command": "explorerFilter.clear",
+        "title": "Focus Folder: Clear Filter"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "explorerFilter.focus",
+        "key": "ctrl+shift+f f",
+        "mac": "cmd+shift+f f"
+      },
+      {
+        "command": "explorerFilter.clear",
+        "key": "ctrl+shift+f c",
+        "mac": "cmd+shift+f c"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=dist/extension.js",
+    "test": "npm run test:unit",
+    "test:unit": "npm run compile && node --test dist/test/*.test.js",
+    "test:vscode": "npm run compile && node dist/test/run-vscode-tests.js",
+    "test:all": "npm run test:unit && npm run test:vscode",
+    "package": "npm run test && npm run bundle && vsce package --out explorer-folder-filter.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "^1.70.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.3.2",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3"
+  }
+}

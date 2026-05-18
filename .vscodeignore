@@ -1,0 +1,9 @@
+node_modules
+src
+test
+plan.md
+tsconfig.json
+*.vsix
+dist/test
+dist/src
+.vscode-test
