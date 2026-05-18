@@ -6,10 +6,12 @@ It is useful in large workspaces where the folder tree is too broad to scan quic
 
 ## Commands
 
-| Command | Default keybinding |
-| --- | --- |
-| `Focus Folder: Filter` | `Ctrl+Shift+F F` / `Cmd+Shift+F F` |
-| `Focus Folder: Clear Filter` | `Ctrl+Shift+F C` / `Cmd+Shift+F C` |
+| Command |
+| --- |
+| `Focus Folder: Filter` |
+| `Focus Folder: Clear Filter` |
+
+No default keybindings are contributed. Assign your own shortcuts from VS Code's Keyboard Shortcuts editor if you want keyboard access.
 
 ## Behavior
 

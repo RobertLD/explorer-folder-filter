@@ -2,7 +2,7 @@
   "name": "explorer-folder-filter",
   "displayName": "Explorer Folder Filter",
   "description": "Temporarily focus the native VS Code Explorer on matching folders.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "RobertLD",
   "license": "MIT",
   "repository": {
@@ -41,18 +41,6 @@
       {
         "command": "explorerFilter.clear",
         "title": "Focus Folder: Clear Filter"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "explorerFilter.focus",
-        "key": "ctrl+shift+f f",
-        "mac": "cmd+shift+f f"
-      },
-      {
-        "command": "explorerFilter.clear",
-        "key": "ctrl+shift+f c",
-        "mac": "cmd+shift+f c"
       }
     ]
   },
