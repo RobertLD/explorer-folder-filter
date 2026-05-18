@@ -2,7 +2,7 @@
   "name": "explorer-folder-filter",
   "displayName": "Explorer Folder Filter",
   "description": "Temporarily focus the native VS Code Explorer on matching folders.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "RobertLD",
   "license": "MIT",
   "repository": {
@@ -16,6 +16,11 @@
     "workspace",
     "files.exclude"
   ],
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1E1E1E",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.70.0"
   },
