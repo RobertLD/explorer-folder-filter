@@ -4,7 +4,18 @@
   "description": "Temporarily focus the native VS Code Explorer on matching folders.",
   "version": "0.0.1",
   "publisher": "RobertLD",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RobertLD/explorer-folder-filter.git"
+  },
+  "keywords": [
+    "explorer",
+    "filter",
+    "folders",
+    "workspace",
+    "files.exclude"
+  ],
   "engines": {
     "vscode": "^1.70.0"
   },

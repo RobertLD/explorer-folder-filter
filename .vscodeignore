@@ -1,6 +1,8 @@
 node_modules
 src
 test
+.gitignore
+publish-plan.md
 plan.md
 tsconfig.json
 *.vsix
