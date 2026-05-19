@@ -2,7 +2,7 @@
   "name": "explorer-folder-filter",
   "displayName": "Explorer Folder Filter",
   "description": "Temporarily focus the native VS Code Explorer on matching folders.",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "publisher": "RobertLD",
   "license": "MIT",
   "repository": {
@@ -28,8 +28,10 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:explorerFilter.focus",
-    "onCommand:explorerFilter.clear"
+    "onCommand:explorerFilter.clear",
+    "onCommand:explorerFilter.toggle"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -41,8 +43,27 @@
       {
         "command": "explorerFilter.clear",
         "title": "Focus Folder: Clear Filter"
+      },
+      {
+        "command": "explorerFilter.toggle",
+        "title": "Focus Folder: Toggle Filter",
+        "icon": "$(filter)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "explorerFilter.toggle",
+          "when": "view == workbench.explorer.fileView && !explorerFolderFilter.active",
+          "group": "navigation"
+        },
+        {
+          "command": "explorerFilter.toggle",
+          "when": "view == workbench.explorer.fileView && explorerFolderFilter.active",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

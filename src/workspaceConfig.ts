@@ -6,7 +6,12 @@ export interface WorkspaceFolderLike {
 
 export interface FilesConfigurationLike {
   get<T>(section: string): T | undefined;
+  inspect?<T>(section: string): WorkspaceConfigurationInspection<T> | undefined;
   update(section: string, value: unknown, target: unknown): Thenable<void> | Promise<void>;
+}
+
+export interface WorkspaceConfigurationInspection<T> {
+  readonly workspaceFolderValue?: T;
 }
 
 export interface WorkspaceLike<TFolder extends WorkspaceFolderLike> {
@@ -43,15 +48,23 @@ export function mergeExcludeMaps(baseExclude: ExcludeMap, generatedExclude: Excl
 }
 
 export function getActiveFilterBaseExclude(
-  currentExclude: ExcludeMap,
-  savedExclude: ExcludeMap | undefined,
+  currentExclude: ExcludeMap | undefined,
+  savedExclude: ExcludeMap | null | undefined,
 ): ExcludeMap {
-  return savedExclude ?? currentExclude;
+  return savedExclude === undefined ? currentExclude ?? {} : savedExclude ?? {};
+}
+
+export function isFilterActiveFromSavedExclude(savedExclude: ExcludeMap | null | undefined): boolean {
+  return savedExclude !== undefined;
+}
+
+export function getWorkspaceFolderExclude(filesConfig: FilesConfigurationLike): ExcludeMap | undefined {
+  return filesConfig.inspect?.<ExcludeMap>('exclude')?.workspaceFolderValue;
 }
 
 export async function updateFilesExclude(
   filesConfig: FilesConfigurationLike,
-  excludeMap: ExcludeMap,
+  excludeMap: ExcludeMap | undefined,
   configurationTarget: unknown,
 ): Promise<void> {
   await filesConfig.update('exclude', excludeMap, configurationTarget);

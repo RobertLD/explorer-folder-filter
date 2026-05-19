@@ -3,7 +3,9 @@ import { describe, it } from 'node:test';
 import type { ExcludeMap } from '../src/filter';
 import {
   getActiveFilterBaseExclude,
+  getWorkspaceFolderExclude,
   getWorkspaceFolderFilesConfig,
+  isFilterActiveFromSavedExclude,
   mergeExcludeMaps,
   selectWorkspaceRoot,
   updateFilesExclude,
@@ -61,6 +63,51 @@ describe('workspace config helpers', () => {
     assert.equal(getActiveFilterBaseExclude(currentExclude, undefined), currentExclude);
   });
 
+  it('uses an empty baseline when no filter is active and the workspace folder has no exclude setting', () => {
+    assert.deepEqual(getActiveFilterBaseExclude(undefined, undefined), {});
+  });
+
+  it('uses an empty baseline when an active filter saved an absent workspace folder exclude setting', () => {
+    assert.deepEqual(getActiveFilterBaseExclude({ stale: true }, null), {});
+  });
+
+  it('treats a saved exclude map as an active filter', () => {
+    assert.equal(isFilterActiveFromSavedExclude({ '**/.cache': true }), true);
+  });
+
+  it('treats a saved absent exclude setting as an active filter', () => {
+    assert.equal(isFilterActiveFromSavedExclude(null), true);
+  });
+
+  it('treats an undefined saved exclude value as inactive', () => {
+    assert.equal(isFilterActiveFromSavedExclude(undefined), false);
+  });
+
+  it('reads the workspace-folder-specific exclude value for exact restore', () => {
+    const workspaceFolderExclude: ExcludeMap = {
+      '**/.cache': true,
+    };
+    const filesConfig: FilesConfigurationLike = {
+      get: () => undefined,
+      inspect: <T>() => ({
+        workspaceFolderValue: workspaceFolderExclude as T,
+      }),
+      update: async () => undefined,
+    };
+
+    assert.equal(getWorkspaceFolderExclude(filesConfig), workspaceFolderExclude);
+  });
+
+  it('returns undefined when the workspace folder has no exclude setting', () => {
+    const filesConfig: FilesConfigurationLike = {
+      get: () => undefined,
+      inspect: () => ({}),
+      update: async () => undefined,
+    };
+
+    assert.equal(getWorkspaceFolderExclude(filesConfig), undefined);
+  });
+
   it('restores the exact saved exclude map to the workspace folder target', async () => {
     const savedExclude: ExcludeMap = {
       '**/.cache': true,
@@ -81,6 +128,27 @@ describe('workspace config helpers', () => {
       {
         section: 'exclude',
         value: savedExclude,
+        target: workspaceFolderTarget,
+      },
+    ]);
+  });
+
+  it('removes the workspace folder exclude setting when the saved value was absent', async () => {
+    const workspaceFolderTarget = Symbol('WorkspaceFolder');
+    const updates: Array<{ section: string; value: unknown; target: unknown }> = [];
+    const filesConfig: FilesConfigurationLike = {
+      get: () => undefined,
+      update: async (section, value, target) => {
+        updates.push({ section, value, target });
+      },
+    };
+
+    await updateFilesExclude(filesConfig, undefined, workspaceFolderTarget);
+
+    assert.deepEqual(updates, [
+      {
+        section: 'exclude',
+        value: undefined,
         target: workspaceFolderTarget,
       },
     ]);
