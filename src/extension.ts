@@ -1,5 +1,13 @@
 import * as vscode from 'vscode';
-import { buildExcludeMap, findMatchingDirs, type ExcludeMap } from './filter';
+import { buildExcludeMap, findMatchingDirs, findMatchingDirsLimited, type ExcludeMap } from './filter';
+import {
+  DEFAULT_MAX_VISITED_DIRS,
+  DEFAULT_PREVIEW_LIMIT,
+  showFilterPicker,
+  type FilterQuickPickItem,
+  type QuickPickLike,
+} from './filterPicker';
+import { addQueryToHistory, normalizeQueryHistory } from './queryHistory';
 import { StatusBarManager } from './statusBar';
 import {
   getActiveFilterBaseExclude,
@@ -13,6 +21,7 @@ import {
 
 const SAVED_EXCLUDE_KEY = 'explorerFolderFilter.savedExclude';
 const ACTIVE_CONTEXT_KEY = 'explorerFolderFilter.active';
+const QUERY_HISTORY_KEY = 'explorerFolderFilter.queryHistory';
 type SavedExclude = ExcludeMap | null;
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -23,12 +32,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('explorerFilter.focus', async () => {
-      const query = await promptForFilterQuery();
-      if (query === undefined) {
-        return;
-      }
-
-      await applyFilterAndUpdateState(context, statusBar, query);
+      await runFilterFlow(context, statusBar);
     }),
     vscode.commands.registerCommand('explorerFilter.clear', async () => {
       const cleared = await clearFilter(context);
@@ -47,12 +51,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const query = await promptForFilterQuery();
-      if (query === undefined) {
-        return;
-      }
-
-      await applyFilterAndUpdateState(context, statusBar, query);
+      await runFilterFlow(context, statusBar);
     }),
   );
 }
@@ -61,40 +60,71 @@ export function deactivate(): void {
   // Nothing to clean up. The user explicitly controls when a filter is cleared.
 }
 
-async function promptForFilterQuery(): Promise<string | undefined> {
-  const query = await vscode.window.showInputBox({
-    prompt: 'Folder name to filter in the Explorer',
-    placeHolder: 'e.g. example-folder-name',
-    ignoreFocusOut: true,
-  });
-
-  if (query === undefined) {
-    return undefined;
-  }
-
-  const trimmedQuery = query.trim();
-  return trimmedQuery || undefined;
-}
-
-async function applyFilterAndUpdateState(
+/**
+ * Resolves the workspace folder once and reuses it for both the preview and the
+ * apply step, so the preview always describes the tree the filter will act on.
+ */
+async function runFilterFlow(
   context: vscode.ExtensionContext,
   statusBar: StatusBarManager,
-  query: string,
 ): Promise<void> {
-  const applied = await applyFilter(context, query);
-  if (applied) {
-    statusBar.show(query);
-    await updateActiveContext(context);
-  }
-}
-
-async function applyFilter(context: vscode.ExtensionContext, query: string): Promise<boolean> {
   const workspaceFolder = getWorkspaceFolder();
   if (!workspaceFolder) {
     vscode.window.showWarningMessage('Open a workspace folder before filtering the Explorer.');
-    return false;
+    return;
   }
 
+  const query = await promptForFilterQuery(context, workspaceFolder.uri.fsPath);
+  if (query === undefined) {
+    return;
+  }
+
+  const applied = await applyFilter(context, workspaceFolder, query);
+  if (!applied) {
+    return;
+  }
+
+  statusBar.show(query);
+  await rememberQuery(context, query);
+  await updateActiveContext(context);
+}
+
+function promptForFilterQuery(
+  context: vscode.ExtensionContext,
+  workspaceRoot: string,
+): Promise<string | undefined> {
+  return showFilterPicker({
+    quickPick: vscode.window.createQuickPick<
+      vscode.QuickPickItem & FilterQuickPickItem
+    >() as unknown as QuickPickLike,
+    history: readQueryHistory(context),
+    search: (query, isCancelled) =>
+      findMatchingDirsLimited(workspaceRoot, query, {
+        limit: DEFAULT_PREVIEW_LIMIT,
+        maxVisitedDirs: DEFAULT_MAX_VISITED_DIRS,
+        isCancelled,
+      }),
+    setTimer: (callback, milliseconds) => setTimeout(callback, milliseconds),
+    clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
+  });
+}
+
+function readQueryHistory(context: vscode.ExtensionContext): string[] {
+  return normalizeQueryHistory(context.workspaceState.get<unknown>(QUERY_HISTORY_KEY));
+}
+
+async function rememberQuery(context: vscode.ExtensionContext, query: string): Promise<void> {
+  await context.workspaceState.update(
+    QUERY_HISTORY_KEY,
+    addQueryToHistory(readQueryHistory(context), query),
+  );
+}
+
+async function applyFilter(
+  context: vscode.ExtensionContext,
+  workspaceFolder: vscode.WorkspaceFolder,
+  query: string,
+): Promise<boolean> {
   const workspaceRoot = workspaceFolder.uri.fsPath;
   const matchingDirs = findMatchingDirs(workspaceRoot, query);
   if (matchingDirs.length === 0) {

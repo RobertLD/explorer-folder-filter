@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
-import { buildExcludeMap, findMatchingDirs } from '../src/filter';
+import { buildExcludeMap, findMatchingDirs, findMatchingDirsLimited } from '../src/filter';
 
 const temporaryRoots: string[] = [];
 
@@ -44,6 +44,110 @@ describe('findMatchingDirs', () => {
     });
 
     assert.deepEqual(findMatchingDirs(root, '   '), []);
+  });
+});
+
+describe('findMatchingDirsLimited', () => {
+  it('reports a complete result when every match fits within the limit', () => {
+    const root = createFixture({
+      'services/target-api': {},
+      'services/target-worker': {},
+      'services/other': {},
+    });
+
+    assert.deepEqual(findMatchingDirsLimited(root, 'target', { limit: 5 }), {
+      matches: ['services/target-api', 'services/target-worker'],
+      truncated: false,
+      cancelled: false,
+    });
+  });
+
+  it('does not report truncation when the match count lands exactly on the limit', () => {
+    const root = createFixture({
+      'services/target-api': {},
+      'services/target-worker': {},
+    });
+
+    const result = findMatchingDirsLimited(root, 'target', { limit: 2 });
+
+    assert.equal(result.matches.length, 2);
+    assert.equal(result.truncated, false);
+  });
+
+  it('caps the matches and flags truncation once the limit is exceeded', () => {
+    const root = createFixture({
+      'services/target-a': {},
+      'services/target-b': {},
+      'services/target-c': {},
+    });
+
+    const result = findMatchingDirsLimited(root, 'target', { limit: 2 });
+
+    assert.equal(result.matches.length, 2);
+    assert.equal(result.truncated, true);
+    assert.equal(result.cancelled, false);
+  });
+
+  it('stops walking once the visited-directory budget runs out', () => {
+    const root = createFixture({
+      'a/b/c/d/e/target-deep': {},
+    });
+
+    const result = findMatchingDirsLimited(root, 'target', { maxVisitedDirs: 2 });
+
+    assert.deepEqual(result.matches, []);
+    assert.equal(result.truncated, true);
+    assert.equal(result.cancelled, false);
+  });
+
+  it('finds a deep match when the visited-directory budget is generous', () => {
+    const root = createFixture({
+      'a/b/c/d/e/target-deep': {},
+    });
+
+    const result = findMatchingDirsLimited(root, 'target', { maxVisitedDirs: 100 });
+
+    assert.deepEqual(result.matches, ['a/b/c/d/e/target-deep']);
+    assert.equal(result.truncated, false);
+  });
+
+  it('stops and flags cancellation when the caller cancels mid-walk', () => {
+    const root = createFixture({
+      'a/target-one': {},
+      'b/target-two': {},
+      'c/target-three': {},
+    });
+
+    let visits = 0;
+    const result = findMatchingDirsLimited(root, 'target', {
+      isCancelled: () => {
+        visits += 1;
+        return visits > 3;
+      },
+    });
+
+    assert.equal(result.cancelled, true);
+    assert.ok(result.matches.length < 3);
+  });
+
+  it('returns an unflagged empty result for blank queries without touching the disk', () => {
+    const result = findMatchingDirsLimited('/definitely/not/a/real/path', '   ', { limit: 1 });
+
+    assert.deepEqual(result, { matches: [], truncated: false, cancelled: false });
+  });
+
+  it('keeps findMatchingDirs behaving as an unbounded search', () => {
+    const root = createFixture({
+      'services/target-a': {},
+      'services/target-b': {},
+      'services/target-c': {},
+    });
+
+    assert.deepEqual(findMatchingDirs(root, 'target'), [
+      'services/target-a',
+      'services/target-b',
+      'services/target-c',
+    ]);
   });
 });
 

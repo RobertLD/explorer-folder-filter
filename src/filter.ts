@@ -5,15 +5,63 @@ const SKIPPED_DIRECTORIES = new Set(['.git', '.vscode', 'node_modules']);
 
 export type ExcludeMap = Record<string, boolean>;
 
+/**
+ * Bounds applied to a preview search so typing in the QuickPick can never block
+ * the extension host for an unbounded amount of time in a large workspace.
+ */
+export interface FindMatchingDirsOptions {
+  /** Stop collecting once this many matches were found. */
+  readonly limit?: number;
+  /** Stop walking once this many directories were visited, even without matches. */
+  readonly maxVisitedDirs?: number;
+  /** Cooperative cancellation, checked once per visited directory. */
+  readonly isCancelled?: () => boolean;
+}
+
+export interface FindMatchingDirsResult {
+  readonly matches: string[];
+  /** True when the walk stopped early because `limit` or `maxVisitedDirs` was reached. */
+  readonly truncated: boolean;
+  /** True when `isCancelled` returned true before the walk finished. */
+  readonly cancelled: boolean;
+}
+
 export function findMatchingDirs(root: string, query: string): string[] {
+  return findMatchingDirsLimited(root, query).matches;
+}
+
+export function findMatchingDirsLimited(
+  root: string,
+  query: string,
+  options: FindMatchingDirsOptions = {},
+): FindMatchingDirsResult {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) {
-    return [];
+    return { matches: [], truncated: false, cancelled: false };
   }
 
-  const matches: string[] = [];
-  walkDirectories(root, '', normalizedQuery, matches);
-  return matches.sort(comparePaths);
+  const limit = options.limit ?? Number.POSITIVE_INFINITY;
+  const state: WalkState = {
+    normalizedQuery,
+    matches: [],
+    // Collect one extra match so an exact-limit result is not reported as truncated.
+    limit: limit + 1,
+    remainingDirs: options.maxVisitedDirs ?? Number.POSITIVE_INFINITY,
+    isCancelled: options.isCancelled,
+    truncated: false,
+    cancelled: false,
+  };
+
+  walkDirectories(root, '', state);
+
+  const overflowed = state.matches.length > limit;
+  const matches = state.matches.sort(comparePaths);
+
+  return {
+    matches: overflowed ? matches.slice(0, limit) : matches,
+    truncated: overflowed || state.truncated,
+    cancelled: state.cancelled,
+  };
 }
 
 export function buildExcludeMap(root: string, matchingPaths: string[]): ExcludeMap {
@@ -52,26 +100,58 @@ export function buildExcludeMap(root: string, matchingPaths: string[]): ExcludeM
   return exclude;
 }
 
-function walkDirectories(
-  root: string,
-  relativeDir: string,
-  normalizedQuery: string,
-  matches: string[],
-): void {
-  const absoluteDir = path.join(root, relativeDir);
+interface WalkState {
+  readonly normalizedQuery: string;
+  readonly matches: string[];
+  readonly limit: number;
+  remainingDirs: number;
+  readonly isCancelled?: () => boolean;
+  truncated: boolean;
+  cancelled: boolean;
+}
 
-  for (const entry of readDirectoryChildren(absoluteDir)) {
-    if (!entry.isDirectory() || SKIPPED_DIRECTORIES.has(entry.name)) {
-      continue;
-    }
-
-    const childPath = joinRelativePath(relativeDir, entry.name);
-    if (entry.name.toLocaleLowerCase().includes(normalizedQuery)) {
-      matches.push(childPath);
-    }
-
-    walkDirectories(root, childPath, normalizedQuery, matches);
+function walkDirectories(root: string, relativeDir: string, state: WalkState): void {
+  if (shouldStopWalking(state)) {
+    return;
   }
+
+  state.remainingDirs -= 1;
+  const absoluteDir = path.join(root, relativeDir);
+  const children = readDirectoryChildren(absoluteDir)
+    .filter((entry) => entry.isDirectory() && !SKIPPED_DIRECTORIES.has(entry.name))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+
+  for (const name of children) {
+    if (shouldStopWalking(state)) {
+      return;
+    }
+
+    const childPath = joinRelativePath(relativeDir, name);
+    if (name.toLocaleLowerCase().includes(state.normalizedQuery)) {
+      state.matches.push(childPath);
+    }
+
+    walkDirectories(root, childPath, state);
+  }
+}
+
+function shouldStopWalking(state: WalkState): boolean {
+  if (state.cancelled || state.truncated || state.matches.length >= state.limit) {
+    return true;
+  }
+
+  if (state.isCancelled?.()) {
+    state.cancelled = true;
+    return true;
+  }
+
+  if (state.remainingDirs <= 0) {
+    state.truncated = true;
+    return true;
+  }
+
+  return false;
 }
 
 function buildKeepSet(matchingPaths: string[]): Set<string> {
