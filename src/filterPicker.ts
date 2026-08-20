@@ -1,4 +1,5 @@
 import type { FindMatchingDirsResult } from './filter';
+import type { FilterPreset } from './presets';
 
 /**
  * QuickPick that previews matching folders while the user types and offers the
@@ -13,7 +14,12 @@ export const DEFAULT_DEBOUNCE_MS = 150;
 export const DEFAULT_PREVIEW_LIMIT = 200;
 export const DEFAULT_MAX_VISITED_DIRS = 20000;
 
-export type FilterQuickPickItemKind = 'query' | 'match' | 'history';
+export type FilterQuickPickItemKind = 'query' | 'match' | 'history' | 'preset';
+
+export interface QuickPickItemButtonLike {
+  readonly iconPath: unknown;
+  readonly tooltip?: string;
+}
 
 export interface FilterQuickPickItem {
   readonly label: string;
@@ -28,6 +34,9 @@ export interface FilterQuickPickItem {
   readonly kind: FilterQuickPickItemKind;
   /** Query this item resolves to when accepted. */
   readonly query: string;
+  /** Preset name, set only on `kind: 'preset'` rows so the delete button knows what to remove. */
+  readonly presetName?: string;
+  readonly buttons?: readonly QuickPickItemButtonLike[];
 }
 
 export interface DisposableLike {
@@ -35,6 +44,10 @@ export interface DisposableLike {
 }
 
 export type EventLike<T> = (listener: (value: T) => unknown) => DisposableLike;
+
+export interface QuickPickItemButtonEventLike {
+  readonly item: FilterQuickPickItem;
+}
 
 export interface QuickPickLike {
   value: string;
@@ -48,6 +61,7 @@ export interface QuickPickLike {
   readonly onDidChangeValue: EventLike<string>;
   readonly onDidAccept: EventLike<void>;
   readonly onDidHide: EventLike<void>;
+  readonly onDidTriggerItemButton: EventLike<QuickPickItemButtonEventLike>;
   show(): void;
   hide(): void;
   dispose(): void;
@@ -69,6 +83,15 @@ export interface FilterPickerDeps {
    */
   readonly search: (query: string, isCancelled: () => boolean) => FindMatchingDirsResult;
   readonly history: readonly string[];
+  readonly presets: readonly FilterPreset[];
+  /** Button shown on the query row; triggering it prompts to save that query as a named preset. */
+  readonly saveButton: QuickPickItemButtonLike;
+  /** Button shown on each preset row; triggering it deletes that preset. */
+  readonly deleteButton: QuickPickItemButtonLike;
+  /** Prompts for a name and persists `query` as a preset. Resolves the updated list, or undefined if cancelled. */
+  readonly onSaveQueryAsPreset: (query: string) => Promise<readonly FilterPreset[] | undefined>;
+  /** Deletes the preset named `name` and resolves the updated list. */
+  readonly onDeletePreset: (name: string) => Promise<readonly FilterPreset[]>;
   readonly debounceMs?: number;
   readonly setTimer: (callback: () => void, milliseconds: number) => TimerHandle;
   readonly clearTimer: (handle: TimerHandle) => void;
@@ -84,7 +107,26 @@ export function buildHistoryItems(history: readonly string[]): FilterQuickPickIt
   }));
 }
 
-export function buildPreviewItems(query: string, result: FindMatchingDirsResult): FilterQuickPickItem[] {
+export function buildPresetItems(
+  presets: readonly FilterPreset[],
+  deleteButton: QuickPickItemButtonLike,
+): FilterQuickPickItem[] {
+  return presets.map((preset) => ({
+    label: `$(bookmark) ${preset.name}`,
+    description: preset.query,
+    alwaysShow: true,
+    kind: 'preset',
+    query: preset.query,
+    presetName: preset.name,
+    buttons: [deleteButton],
+  }));
+}
+
+export function buildPreviewItems(
+  query: string,
+  result: FindMatchingDirsResult,
+  saveButton: QuickPickItemButtonLike,
+): FilterQuickPickItem[] {
   const trimmed = query.trim();
   const count = result.matches.length;
   const queryItem: FilterQuickPickItem = {
@@ -96,6 +138,7 @@ export function buildPreviewItems(query: string, result: FindMatchingDirsResult)
     alwaysShow: true,
     kind: 'query',
     query: trimmed,
+    buttons: [saveButton],
   };
 
   const matchItems: FilterQuickPickItem[] = result.matches.map((relativePath) => ({
@@ -117,8 +160,13 @@ export function showFilterPicker(deps: FilterPickerDeps): Promise<string | undef
   let pendingTimer: TimerHandle | undefined;
   let runningSearch: { cancelled: boolean } | undefined;
   let settled = false;
+  let presets = deps.presets;
 
   return new Promise<string | undefined>((resolve) => {
+    const showEmptyQueryItems = (): void => {
+      quickPick.items = [...buildPresetItems(presets, deps.deleteButton), ...buildHistoryItems(deps.history)];
+    };
+
     const cancelPendingWork = (): void => {
       if (pendingTimer !== undefined) {
         deps.clearTimer(pendingTimer);
@@ -158,7 +206,7 @@ export function showFilterPicker(deps: FilterPickerDeps): Promise<string | undef
           return;
         }
 
-        quickPick.items = buildPreviewItems(trimmedQuery, result);
+        quickPick.items = buildPreviewItems(trimmedQuery, result, deps.saveButton);
       } finally {
         if (runningSearch === token) {
           runningSearch = undefined;
@@ -177,7 +225,7 @@ export function showFilterPicker(deps: FilterPickerDeps): Promise<string | undef
         const trimmed = value.trim();
         if (!trimmed) {
           quickPick.busy = false;
-          quickPick.items = buildHistoryItems(deps.history);
+          showEmptyQueryItems();
           return;
         }
 
@@ -193,13 +241,42 @@ export function showFilterPicker(deps: FilterPickerDeps): Promise<string | undef
       quickPick.onDidHide(() => {
         settle(undefined);
       }),
+      quickPick.onDidTriggerItemButton(({ item }) => {
+        if (settled) {
+          return;
+        }
+
+        if (item.kind === 'query') {
+          void deps.onSaveQueryAsPreset(item.query).then((updated) => {
+            if (updated === undefined || settled) {
+              return;
+            }
+
+            presets = updated;
+          });
+          return;
+        }
+
+        if (item.kind === 'preset' && item.presetName) {
+          void deps.onDeletePreset(item.presetName).then((updated) => {
+            if (settled) {
+              return;
+            }
+
+            presets = updated;
+            if (!quickPick.value.trim()) {
+              showEmptyQueryItems();
+            }
+          });
+        }
+      }),
     );
 
     quickPick.title = 'Focus Folder: Filter';
     quickPick.placeholder = 'Type part of a folder name, or pick a recent filter';
     quickPick.matchOnDescription = true;
     quickPick.ignoreFocusOut = true;
-    quickPick.items = buildHistoryItems(deps.history);
+    showEmptyQueryItems();
     quickPick.show();
   });
 }

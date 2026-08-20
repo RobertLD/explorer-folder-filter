@@ -26,9 +26,13 @@ The prompt previews matching folders while you type:
 
 - The first row applies whatever you typed and shows how many folders match, so an empty result set is visible before you commit to it.
 - The rows below list the matching folders with their paths. Picking one reuses that folder's name as the query.
-- Opening the prompt with an empty input lists your recent queries for this workspace.
+- Opening the prompt with an empty input lists your saved presets, followed by your recent queries for this workspace.
 
 The preview is bounded — it stops after 200 matches or 20000 visited directories, whichever comes first — so typing stays responsive in large workspaces. Truncation only affects the preview; applying a filter always uses every match in the workspace.
+
+### Presets
+
+Click the star button on the query row to save the query you just typed as a named preset, without leaving the prompt. Presets are listed above your recent queries when the prompt opens with an empty input; picking one applies its query. Click the trash button on a preset row to delete it. Presets are stored per workspace, the same as query history.
 
 ## Behavior
 
