@@ -21,6 +21,7 @@ import {
 
 const SAVED_EXCLUDE_KEY = 'explorerFolderFilter.savedExclude';
 const ACTIVE_CONTEXT_KEY = 'explorerFolderFilter.active';
+const ACTIVE_QUERY_KEY = 'explorerFolderFilter.activeQuery';
 const QUERY_HISTORY_KEY = 'explorerFolderFilter.queryHistory';
 type SavedExclude = ExcludeMap | null;
 
@@ -29,6 +30,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(statusBar);
 
   void updateActiveContext(context);
+  restoreStatusBar(context, statusBar);
 
   context.subscriptions.push(
     vscode.commands.registerCommand('explorerFilter.focus', async () => {
@@ -58,6 +60,23 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   // Nothing to clean up. The user explicitly controls when a filter is cleared.
+}
+
+/**
+ * Reloading the window re-runs activate() but VS Code already reapplied the
+ * saved files.exclude from settings, so the filter is still in effect. Without
+ * this, the status bar item (the user's only visible way to clear it) would
+ * stay hidden until they re-opened the picker.
+ */
+function restoreStatusBar(context: vscode.ExtensionContext, statusBar: StatusBarManager): void {
+  if (!isFilterActive(context)) {
+    return;
+  }
+
+  const activeQuery = context.workspaceState.get<string>(ACTIVE_QUERY_KEY);
+  if (activeQuery) {
+    statusBar.show(activeQuery);
+  }
 }
 
 /**
@@ -144,6 +163,7 @@ async function applyFilter(
   const baseExclude = getActiveFilterBaseExclude(currentWorkspaceFolderExclude, savedExclude);
   const excludeMap = mergeExcludeMaps(baseExclude, generatedExclude);
   await updateFilesExclude(filesConfig, excludeMap, vscode.ConfigurationTarget.WorkspaceFolder);
+  await context.workspaceState.update(ACTIVE_QUERY_KEY, query);
   vscode.window.showInformationMessage(`Explorer Folder Filter matched ${matchingDirs.length} folder(s).`);
   return true;
 }
@@ -162,6 +182,7 @@ async function clearFilter(context: vscode.ExtensionContext): Promise<boolean> {
   const filesConfig = getWorkspaceFolderFilesConfig(vscode.workspace, workspaceFolder);
   await updateFilesExclude(filesConfig, savedExclude ?? undefined, vscode.ConfigurationTarget.WorkspaceFolder);
   await context.workspaceState.update(SAVED_EXCLUDE_KEY, undefined);
+  await context.workspaceState.update(ACTIVE_QUERY_KEY, undefined);
   return true;
 }
 
