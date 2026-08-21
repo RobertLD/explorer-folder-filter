@@ -47,6 +47,7 @@ export type EventLike<T> = (listener: (value: T) => unknown) => DisposableLike;
 
 export interface QuickPickItemButtonEventLike {
   readonly item: FilterQuickPickItem;
+  readonly button: QuickPickItemButtonLike;
 }
 
 export interface QuickPickLike {
@@ -84,26 +85,35 @@ export interface FilterPickerDeps {
   readonly search: (query: string, isCancelled: () => boolean) => FindMatchingDirsResult;
   readonly history: readonly string[];
   readonly presets: readonly FilterPreset[];
-  /** Button shown on the query row; triggering it prompts to save that query as a named preset. */
+  /** Button shown on the query and history rows; triggering it prompts to save that query as a named preset. */
   readonly saveButton: QuickPickItemButtonLike;
   /** Button shown on each preset row; triggering it deletes that preset. */
   readonly deleteButton: QuickPickItemButtonLike;
+  /** Button shown on each history row; triggering it removes that entry from history. */
+  readonly removeHistoryButton: QuickPickItemButtonLike;
   /** Prompts for a name and persists `query` as a preset. Resolves the updated list, or undefined if cancelled. */
   readonly onSaveQueryAsPreset: (query: string) => Promise<readonly FilterPreset[] | undefined>;
   /** Deletes the preset named `name` and resolves the updated list. */
   readonly onDeletePreset: (name: string) => Promise<readonly FilterPreset[]>;
+  /** Removes `query` from history and resolves the updated list. */
+  readonly onRemoveHistoryEntry: (query: string) => Promise<readonly string[]>;
   readonly debounceMs?: number;
   readonly setTimer: (callback: () => void, milliseconds: number) => TimerHandle;
   readonly clearTimer: (handle: TimerHandle) => void;
 }
 
-export function buildHistoryItems(history: readonly string[]): FilterQuickPickItem[] {
+export function buildHistoryItems(
+  history: readonly string[],
+  saveButton: QuickPickItemButtonLike,
+  removeHistoryButton: QuickPickItemButtonLike,
+): FilterQuickPickItem[] {
   return history.map((query) => ({
     label: `$(history) ${query}`,
     description: 'Recent filter',
     alwaysShow: true,
     kind: 'history',
     query,
+    buttons: [saveButton, removeHistoryButton],
   }));
 }
 
@@ -161,10 +171,14 @@ export function showFilterPicker(deps: FilterPickerDeps): Promise<string | undef
   let runningSearch: { cancelled: boolean } | undefined;
   let settled = false;
   let presets = deps.presets;
+  let history = deps.history;
 
   return new Promise<string | undefined>((resolve) => {
     const showEmptyQueryItems = (): void => {
-      quickPick.items = [...buildPresetItems(presets, deps.deleteButton), ...buildHistoryItems(deps.history)];
+      quickPick.items = [
+        ...buildPresetItems(presets, deps.deleteButton),
+        ...buildHistoryItems(history, deps.saveButton, deps.removeHistoryButton),
+      ];
     };
 
     const cancelPendingWork = (): void => {
@@ -241,12 +255,26 @@ export function showFilterPicker(deps: FilterPickerDeps): Promise<string | undef
       quickPick.onDidHide(() => {
         settle(undefined);
       }),
-      quickPick.onDidTriggerItemButton(({ item }) => {
+      quickPick.onDidTriggerItemButton(({ item, button }) => {
         if (settled) {
           return;
         }
 
-        if (item.kind === 'query') {
+        if (item.kind === 'history' && button === deps.removeHistoryButton) {
+          void deps.onRemoveHistoryEntry(item.query).then((updated) => {
+            if (settled) {
+              return;
+            }
+
+            history = updated;
+            if (!quickPick.value.trim()) {
+              showEmptyQueryItems();
+            }
+          });
+          return;
+        }
+
+        if (item.kind === 'query' || item.kind === 'history') {
           void deps.onSaveQueryAsPreset(item.query).then((updated) => {
             if (updated === undefined || settled) {
               return;

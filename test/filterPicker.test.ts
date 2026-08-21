@@ -17,16 +17,18 @@ import {
 
 const SAVE_BUTTON: QuickPickItemButtonLike = { iconPath: 'star', tooltip: 'Save as preset' };
 const DELETE_BUTTON: QuickPickItemButtonLike = { iconPath: 'trash', tooltip: 'Delete preset' };
+const REMOVE_HISTORY_BUTTON: QuickPickItemButtonLike = { iconPath: 'trash', tooltip: 'Remove from history' };
 
 describe('buildHistoryItems', () => {
-  it('renders one always-shown row per recent query', () => {
-    assert.deepEqual(buildHistoryItems(['modules', 'services']), [
+  it('renders one always-shown row per recent query, with save-as-preset and remove buttons', () => {
+    assert.deepEqual(buildHistoryItems(['modules', 'services'], SAVE_BUTTON, REMOVE_HISTORY_BUTTON), [
       {
         label: '$(history) modules',
         description: 'Recent filter',
         alwaysShow: true,
         kind: 'history',
         query: 'modules',
+        buttons: [SAVE_BUTTON, REMOVE_HISTORY_BUTTON],
       },
       {
         label: '$(history) services',
@@ -34,12 +36,13 @@ describe('buildHistoryItems', () => {
         alwaysShow: true,
         kind: 'history',
         query: 'services',
+        buttons: [SAVE_BUTTON, REMOVE_HISTORY_BUTTON],
       },
     ]);
   });
 
   it('renders nothing when there is no history', () => {
-    assert.deepEqual(buildHistoryItems([]), []);
+    assert.deepEqual(buildHistoryItems([], SAVE_BUTTON, REMOVE_HISTORY_BUTTON), []);
   });
 });
 
@@ -345,6 +348,21 @@ describe('showFilterPicker', () => {
     await harness.result;
   });
 
+  it('saves a history entry as a preset when its row button is triggered', async () => {
+    const harness = createHarness({
+      history: ['modules'],
+      onSaveQueryAsPreset: async (query) => [{ name: 'Modules', query }],
+    });
+
+    harness.quickPick.triggerButtonOn(0);
+    await flushAsync();
+
+    assert.deepEqual(harness.saveCalls, ['modules']);
+
+    harness.quickPick.emitHide();
+    await harness.result;
+  });
+
   it('does not change the preset list when the save prompt is cancelled', async () => {
     const harness = createHarness({
       matches: ['services/api'],
@@ -360,6 +378,25 @@ describe('showFilterPicker', () => {
     assert.deepEqual(
       harness.quickPick.items.map((item) => item.kind),
       [],
+    );
+
+    harness.quickPick.emitHide();
+    await harness.result;
+  });
+
+  it('removes a history entry when its remove button is triggered, refreshing the empty-query list', async () => {
+    const harness = createHarness({
+      history: ['modules', 'services'],
+      onRemoveHistoryEntry: async () => ['services'],
+    });
+
+    harness.quickPick.triggerButtonOn(0, 1);
+    await flushAsync();
+
+    assert.deepEqual(harness.removeHistoryCalls, ['modules']);
+    assert.deepEqual(
+      harness.quickPick.items.map((item) => item.query),
+      ['services'],
     );
 
     harness.quickPick.emitHide();
@@ -397,6 +434,7 @@ interface HarnessOptions {
   readonly presets?: FilterPreset[];
   readonly onSaveQueryAsPreset?: (query: string) => Promise<readonly FilterPreset[] | undefined>;
   readonly onDeletePreset?: (name: string) => Promise<readonly FilterPreset[]>;
+  readonly onRemoveHistoryEntry?: (query: string) => Promise<readonly string[]>;
 }
 
 /** Flushes the microtasks queued by the `async` preset callbacks. */
@@ -410,6 +448,7 @@ function createHarness(options: HarnessOptions) {
   const searchCalls: string[] = [];
   const saveCalls: string[] = [];
   const deleteCalls: string[] = [];
+  const removeHistoryCalls: string[] = [];
 
   const promise = showFilterPicker({
     quickPick,
@@ -417,6 +456,7 @@ function createHarness(options: HarnessOptions) {
     presets: options.presets ?? [],
     saveButton: SAVE_BUTTON,
     deleteButton: DELETE_BUTTON,
+    removeHistoryButton: REMOVE_HISTORY_BUTTON,
     debounceMs: 150,
     search: (query) => {
       searchCalls.push(query);
@@ -430,11 +470,15 @@ function createHarness(options: HarnessOptions) {
       deleteCalls.push(name);
       return options.onDeletePreset ? options.onDeletePreset(name) : [];
     },
+    onRemoveHistoryEntry: async (query) => {
+      removeHistoryCalls.push(query);
+      return options.onRemoveHistoryEntry ? options.onRemoveHistoryEntry(query) : [];
+    },
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
   });
 
-  return { quickPick, timers, searchCalls, saveCalls, deleteCalls, result: promise };
+  return { quickPick, timers, searchCalls, saveCalls, deleteCalls, removeHistoryCalls, result: promise };
 }
 
 function createTimerHarness() {
@@ -532,15 +576,16 @@ class FakeQuickPick implements QuickPickLike {
     }
   }
 
-  /** Simulates the user clicking the button on the row at `index`. */
-  triggerButtonOn(index: number): void {
+  /** Simulates the user clicking the button at `buttonIndex` on the row at `index`. */
+  triggerButtonOn(index: number, buttonIndex = 0): void {
     const item = this.items[index];
-    if (!item) {
+    const button = item?.buttons?.[buttonIndex];
+    if (!item || !button) {
       return;
     }
 
     for (const listener of [...this.itemButtonListeners]) {
-      listener({ item });
+      listener({ item, button });
     }
   }
 }

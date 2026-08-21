@@ -8,7 +8,7 @@ import {
   type QuickPickLike,
 } from './filterPicker';
 import { normalizePresets, removePreset, savePreset, type FilterPreset } from './presets';
-import { addQueryToHistory, normalizeQueryHistory } from './queryHistory';
+import { addQueryToHistory, normalizeQueryHistory, removeQueryFromHistory } from './queryHistory';
 import { StatusBarManager } from './statusBar';
 import {
   getActiveFilterBaseExclude,
@@ -122,8 +122,10 @@ function promptForFilterQuery(
     presets: readPresets(context),
     saveButton: { iconPath: new vscode.ThemeIcon('star'), tooltip: 'Save as preset' },
     deleteButton: { iconPath: new vscode.ThemeIcon('trash'), tooltip: 'Delete preset' },
+    removeHistoryButton: { iconPath: new vscode.ThemeIcon('trash'), tooltip: 'Remove from history' },
     onSaveQueryAsPreset: (query) => saveQueryAsPreset(context, query),
     onDeletePreset: (name) => deletePreset(context, name),
+    onRemoveHistoryEntry: (query) => removeHistoryEntry(context, query),
     search: (query, isCancelled) =>
       findMatchingDirsLimited(workspaceRoot, query, {
         limit: DEFAULT_PREVIEW_LIMIT,
@@ -146,6 +148,12 @@ async function rememberQuery(context: vscode.ExtensionContext, query: string): P
   );
 }
 
+async function removeHistoryEntry(context: vscode.ExtensionContext, query: string): Promise<string[]> {
+  const updated = removeQueryFromHistory(readQueryHistory(context), query);
+  await context.workspaceState.update(QUERY_HISTORY_KEY, updated);
+  return updated;
+}
+
 function readPresets(context: vscode.ExtensionContext): FilterPreset[] {
   return normalizePresets(context.workspaceState.get<unknown>(PRESETS_KEY));
 }
@@ -157,6 +165,8 @@ async function saveQueryAsPreset(
   const name = await vscode.window.showInputBox({
     prompt: `Save "${query}" as a preset`,
     placeHolder: 'Preset name',
+    value: query,
+    valueSelection: [0, query.length],
     ignoreFocusOut: true,
     validateInput: (value) => (value.trim() ? undefined : 'Preset name cannot be empty.'),
   });
