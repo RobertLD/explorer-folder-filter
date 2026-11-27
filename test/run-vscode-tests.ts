@@ -9,6 +9,7 @@ async function main(): Promise<void> {
 
   try {
     await runTests({
+      version: '1.74.0',
       extensionDevelopmentPath: path.resolve(__dirname, '../..'),
       extensionTestsPath: path.resolve(__dirname, 'vscode/index'),
       launchArgs: [workspacePath, '--disable-workspace-trust'],

@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `Focus on This Folder` Explorer context menu action that focuses the Explorer on the selected folders.
+- Cancellable progress notification while the folder search runs.
+- Workspace trust and virtual workspace capability declarations.
+
+### Changed
+
+- The Explorer title-bar button shows a filled filter icon while a filter is active.
+- Folder search no longer blocks the extension host.
+- Command titles use the `Focus Folder` command category.
+- Minimum VS Code version is now 1.74.
+- Removed activation events that VS Code 1.74 generates from contributed commands.
+
+### Fixed
+
+- Overlapping filter and clear operations no longer interleave their `files.exclude` and saved-state updates.
+- A failed `files.exclude` write no longer leaves the filter marked as active.
+
 ## [0.1.0] - 2026-05-19
 
 ### Added

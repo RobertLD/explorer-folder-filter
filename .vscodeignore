@@ -2,6 +2,7 @@ node_modules
 src
 test
 .gitignore
+more-ui.md
 publish-plan.md
 plan.md
 tsconfig.json
@@ -9,3 +10,4 @@ tsconfig.json
 dist/test
 dist/src
 .vscode-test
+.claude

@@ -11,13 +11,13 @@ async function testGeneratedBraceExcludesAreHonoredByVSCode(): Promise<void> {
   const workspaceRoot = process.env.EXPLORER_FILTER_TEST_WORKSPACE;
   assert.ok(workspaceRoot, 'EXPLORER_FILTER_TEST_WORKSPACE must be set');
 
-  const matches = findMatchingDirs(workspaceRoot, 'target-folder');
+  const matches = await findMatchingDirs(workspaceRoot, 'target-folder', new AbortController().signal);
   assert.deepEqual(matches, [
     'workspace-a/modules/target-folder',
     'workspace-b/modules/target-folder',
   ]);
 
-  const excludeMap = buildExcludeMap(workspaceRoot, matches);
+  const excludeMap = await buildExcludeMap(workspaceRoot, matches, new AbortController().signal);
   assert.deepEqual(excludeMap, {
     shared: true,
     'workspace-a/config': true,
