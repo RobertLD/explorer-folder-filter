@@ -1,17 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { OperationCancelledError } from './latestOperation';
 
 const SKIPPED_DIRECTORIES = new Set(['.git', '.vscode', 'node_modules']);
 const MAX_CONCURRENT_DIRECTORY_READS = 16;
 
 export type ExcludeMap = Record<string, boolean>;
-
-export class ScanCancelledError extends Error {
-  constructor() {
-    super('Folder scan was cancelled.');
-    this.name = 'ScanCancelledError';
-  }
-}
 
 export async function findMatchingDirs(root: string, query: string, signal: AbortSignal): Promise<string[]> {
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -41,12 +35,8 @@ export async function buildExcludeMap(
       continue;
     }
 
-    const absoluteDir = path.join(root, relativeDir);
-    const entries = await readDirectoryChildren(absoluteDir, signal);
-    const children = entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((left, right) => left.localeCompare(right));
+    const children = await readChildDirectoryNames(path.join(root, relativeDir), signal);
+    children.sort((left, right) => left.localeCompare(right));
 
     if (children.length === 0) {
       continue;
@@ -82,44 +72,38 @@ export function toWorkspaceRelativeDir(root: string, directory: string): string 
 }
 
 async function walkDirectories(root: string, normalizedQuery: string, signal: AbortSignal): Promise<string[]> {
+  const pending: string[] = [''];
   const matches: string[] = [];
-  let frontier: string[] = [''];
 
-  while (frontier.length > 0) {
-    const nextFrontier: string[] = [];
+  let start = 0;
+  while (start < pending.length) {
+    const batch = pending.slice(start, start + MAX_CONCURRENT_DIRECTORY_READS);
+    start += batch.length;
+    const childPathsPerParent = await Promise.all(
+      batch.map((relativeDir) => readSearchableChildPaths(root, relativeDir, signal)),
+    );
 
-    for (let start = 0; start < frontier.length; start += MAX_CONCURRENT_DIRECTORY_READS) {
-      const batch = frontier.slice(start, start + MAX_CONCURRENT_DIRECTORY_READS);
-      const childNamesPerParent = await Promise.all(
-        batch.map((relativeDir) => readSearchableChildDirectoryNames(root, relativeDir, signal)),
-      );
-
-      for (let index = 0; index < batch.length; index += 1) {
-        for (const childName of childNamesPerParent[index]) {
-          const childPath = joinRelativePath(batch[index], childName);
-          nextFrontier.push(childPath);
-          if (childName.toLocaleLowerCase().includes(normalizedQuery)) {
-            matches.push(childPath);
-          }
-        }
+    for (const childPath of childPathsPerParent.flat()) {
+      pending.push(childPath);
+      if (path.posix.basename(childPath).toLocaleLowerCase().includes(normalizedQuery)) {
+        matches.push(childPath);
       }
     }
-
-    frontier = nextFrontier;
   }
 
   return matches;
 }
 
-async function readSearchableChildDirectoryNames(
-  root: string,
-  relativeDir: string,
-  signal: AbortSignal,
-): Promise<string[]> {
-  const entries = await readDirectoryChildren(path.join(root, relativeDir), signal);
-  return entries
-    .filter((entry) => entry.isDirectory() && !SKIPPED_DIRECTORIES.has(entry.name))
-    .map((entry) => entry.name);
+async function readSearchableChildPaths(root: string, relativeDir: string, signal: AbortSignal): Promise<string[]> {
+  const childNames = await readChildDirectoryNames(path.join(root, relativeDir), signal);
+  return childNames
+    .filter((name) => !SKIPPED_DIRECTORIES.has(name))
+    .map((name) => joinRelativePath(relativeDir, name));
+}
+
+async function readChildDirectoryNames(directory: string, signal: AbortSignal): Promise<string[]> {
+  const entries = await readDirectoryChildren(directory, signal);
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 }
 
 function buildKeepSet(matchingPaths: string[]): Set<string> {
@@ -154,7 +138,7 @@ function formatGlobPath(value: string): string {
 
 async function readDirectoryChildren(directory: string, signal: AbortSignal): Promise<fs.Dirent[]> {
   if (signal.aborted) {
-    throw new ScanCancelledError();
+    throw new OperationCancelledError();
   }
 
   try {

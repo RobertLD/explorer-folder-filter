@@ -1,12 +1,6 @@
 import * as vscode from 'vscode';
-import {
-  buildExcludeMap,
-  findMatchingDirs,
-  ScanCancelledError,
-  toWorkspaceRelativeDir,
-  type ExcludeMap,
-} from './filter';
-import { SerialQueue } from './serialQueue';
+import { buildExcludeMap, findMatchingDirs, toWorkspaceRelativeDir, type ExcludeMap } from './filter';
+import { LatestOperationQueue, OperationCancelledError } from './latestOperation';
 import { StatusBarManager } from './statusBar';
 import {
   getActiveFilterBaseExclude,
@@ -22,8 +16,7 @@ const SAVED_EXCLUDE_KEY = 'explorerFolderFilter.savedExclude';
 const ACTIVE_CONTEXT_KEY = 'explorerFolderFilter.active';
 type SavedExclude = ExcludeMap | null;
 
-const stateQueue = new SerialQueue();
-let latestOperation: AbortController | undefined;
+const operations = new LatestOperationQueue();
 
 export function activate(context: vscode.ExtensionContext): void {
   const statusBar = new StatusBarManager();
@@ -32,12 +25,8 @@ export function activate(context: vscode.ExtensionContext): void {
   void updateActiveContext(context);
 
   context.subscriptions.push(
-    registerReportingCommand('explorerFilter.focus', async () => {
-      await promptAndFilter(context, statusBar);
-    }),
-    registerReportingCommand('explorerFilter.clear', async () => {
-      await clearFilterAndUpdateState(context, statusBar);
-    }),
+    registerReportingCommand('explorerFilter.focus', () => promptAndFilter(context, statusBar)),
+    registerReportingCommand('explorerFilter.clear', () => clearFilterAndUpdateState(context, statusBar)),
     registerReportingCommand('explorerFilter.toggle', async () => {
       if (isFilterActive(context)) {
         await clearFilterAndUpdateState(context, statusBar);
@@ -46,11 +35,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
       await promptAndFilter(context, statusBar);
     }),
-    registerReportingCommand(
-      'explorerFilter.focusFolder',
-      async (clickedUri?: vscode.Uri, selectedUris?: vscode.Uri[]) => {
-        await focusOnFolders(context, statusBar, clickedUri, selectedUris);
-      },
+    registerReportingCommand('explorerFilter.focusFolder', (clickedUri?: vscode.Uri, selectedUris?: vscode.Uri[]) =>
+      focusOnFolders(context, statusBar, clickedUri, selectedUris),
     ),
   );
 }
@@ -63,6 +49,10 @@ function registerReportingCommand<TArgs extends unknown[]>(
     try {
       await handler(...args);
     } catch (error) {
+      if (error instanceof OperationCancelledError) {
+        return;
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       vscode.window.showErrorMessage(`Explorer Folder Filter: ${message}`);
     }
@@ -94,9 +84,8 @@ async function promptAndFilter(context: vscode.ExtensionContext, statusBar: Stat
     return;
   }
 
-  const workspaceFolder = getWorkspaceFolder();
+  const workspaceFolder = requireWorkspaceFolder();
   if (!workspaceFolder) {
-    vscode.window.showWarningMessage('Open a workspace folder before filtering the Explorer.');
     return;
   }
 
@@ -118,20 +107,18 @@ async function focusOnFolders(
   clickedUri: vscode.Uri | undefined,
   selectedUris: vscode.Uri[] | undefined,
 ): Promise<void> {
-  const targetUris = selectFocusTargets(clickedUri, selectedUris);
-  if (targetUris.length === 0) {
+  if (!clickedUri) {
     vscode.window.showWarningMessage('Right-click a folder in the Explorer to focus on it.');
     return;
   }
 
-  const workspaceFolder = getWorkspaceFolder();
+  const workspaceFolder = requireWorkspaceFolder();
   if (!workspaceFolder) {
-    vscode.window.showWarningMessage('Open a workspace folder before filtering the Explorer.');
     return;
   }
 
   const relativeDirs: string[] = [];
-  for (const uri of targetUris) {
+  for (const uri of selectFocusTargets(clickedUri, selectedUris)) {
     const relativeDir = await resolveFocusableFolder(workspaceFolder, uri);
     if (relativeDir === undefined) {
       return;
@@ -141,21 +128,14 @@ async function focusOnFolders(
   }
 
   const label = formatFocusLabel(relativeDirs);
-  await withCancellableProgress(`Explorer Folder Filter: focusing on ${label}`, async (signal) => {
-    await applyFolderFilter(context, statusBar, workspaceFolder, relativeDirs, label, signal);
-  });
+  await withCancellableProgress(`Explorer Folder Filter: focusing on ${label}`, (signal) =>
+    applyFolderFilter(context, statusBar, workspaceFolder, relativeDirs, label, signal),
+  );
 }
 
-function selectFocusTargets(
-  clickedUri: vscode.Uri | undefined,
-  selectedUris: vscode.Uri[] | undefined,
-): vscode.Uri[] {
-  if (!clickedUri) {
-    return [];
-  }
-
+function selectFocusTargets(clickedUri: vscode.Uri, selectedUris: vscode.Uri[] | undefined): vscode.Uri[] {
   const clickedKey = clickedUri.toString();
-  if (selectedUris && selectedUris.some((uri) => uri.toString() === clickedKey)) {
+  if (selectedUris?.some((uri) => uri.toString() === clickedKey)) {
     return selectedUris;
   }
 
@@ -174,17 +154,11 @@ async function resolveFocusableFolder(
   workspaceFolder: vscode.WorkspaceFolder,
   uri: vscode.Uri,
 ): Promise<string | undefined> {
-  const owningFolder = vscode.workspace.getWorkspaceFolder(uri);
-  if (owningFolder?.uri.toString() !== workspaceFolder.uri.toString()) {
-    vscode.window.showWarningMessage(
-      `Explorer Folder Filter can only focus folders inside the first workspace folder (${workspaceFolder.name}).`,
-    );
-    return undefined;
-  }
-
   const relativeDir = toWorkspaceRelativeDir(workspaceFolder.uri.fsPath, uri.fsPath);
   if (relativeDir === undefined) {
-    vscode.window.showWarningMessage('Select a folder below the workspace root to focus on it.');
+    vscode.window.showWarningMessage(
+      `Explorer Folder Filter can only focus folders below the root of the first workspace folder (${workspaceFolder.name}).`,
+    );
     return undefined;
   }
 
@@ -201,37 +175,22 @@ async function withCancellableProgress(
   title: string,
   task: (signal: AbortSignal) => Promise<void>,
 ): Promise<void> {
-  latestOperation?.abort();
-  const controller = new AbortController();
-  latestOperation = controller;
-
-  try {
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title,
-        cancellable: true,
-      },
-      async (_progress, token) => {
-        const subscription = token.onCancellationRequested(() => controller.abort());
-        try {
-          await task(controller.signal);
-        } finally {
-          subscription.dispose();
-        }
-      },
-    );
-  } catch (error) {
-    if (error instanceof ScanCancelledError) {
-      return;
-    }
-
-    throw error;
-  } finally {
-    if (latestOperation === controller) {
-      latestOperation = undefined;
-    }
-  }
+  const controller = operations.start();
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title,
+      cancellable: true,
+    },
+    async (_progress, token) => {
+      const subscription = token.onCancellationRequested(() => controller.abort());
+      try {
+        await task(controller.signal);
+      } finally {
+        subscription.dispose();
+      }
+    },
+  );
 }
 
 async function applyFolderFilter(
@@ -244,11 +203,7 @@ async function applyFolderFilter(
 ): Promise<void> {
   const generatedExclude = await buildExcludeMap(workspaceFolder.uri.fsPath, matchingDirs, signal);
 
-  await stateQueue.run(async () => {
-    if (signal.aborted) {
-      throw new ScanCancelledError();
-    }
-
+  await operations.commit(signal, async () => {
     const filesConfig = getWorkspaceFolderFilesConfig(vscode.workspace, workspaceFolder);
     const currentWorkspaceFolderExclude = getWorkspaceFolderExclude(filesConfig);
     const savedExclude = context.workspaceState.get<SavedExclude>(SAVED_EXCLUDE_KEY);
@@ -278,8 +233,8 @@ async function clearFilterAndUpdateState(
   context: vscode.ExtensionContext,
   statusBar: StatusBarManager,
 ): Promise<void> {
-  latestOperation?.abort();
-  await stateQueue.run(async () => {
+  const controller = operations.start();
+  await operations.commit(controller.signal, async () => {
     const cleared = await clearFilter(context);
     if (cleared) {
       statusBar.hide();
@@ -303,6 +258,15 @@ async function clearFilter(context: vscode.ExtensionContext): Promise<boolean> {
   await updateFilesExclude(filesConfig, savedExclude ?? undefined, vscode.ConfigurationTarget.WorkspaceFolder);
   await context.workspaceState.update(SAVED_EXCLUDE_KEY, undefined);
   return true;
+}
+
+function requireWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
+  const workspaceFolder = getWorkspaceFolder();
+  if (!workspaceFolder) {
+    vscode.window.showWarningMessage('Open a workspace folder before filtering the Explorer.');
+  }
+
+  return workspaceFolder;
 }
 
 function getWorkspaceFolder(): vscode.WorkspaceFolder | undefined {

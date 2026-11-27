@@ -3,6 +3,8 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { buildExcludeMap, findMatchingDirs } from '../../src/filter';
 
+const neverAborted = new AbortController().signal;
+
 export async function run(): Promise<void> {
   await testGeneratedBraceExcludesAreHonoredByVSCode();
 }
@@ -11,13 +13,13 @@ async function testGeneratedBraceExcludesAreHonoredByVSCode(): Promise<void> {
   const workspaceRoot = process.env.EXPLORER_FILTER_TEST_WORKSPACE;
   assert.ok(workspaceRoot, 'EXPLORER_FILTER_TEST_WORKSPACE must be set');
 
-  const matches = await findMatchingDirs(workspaceRoot, 'target-folder', new AbortController().signal);
+  const matches = await findMatchingDirs(workspaceRoot, 'target-folder', neverAborted);
   assert.deepEqual(matches, [
     'workspace-a/modules/target-folder',
     'workspace-b/modules/target-folder',
   ]);
 
-  const excludeMap = await buildExcludeMap(workspaceRoot, matches, new AbortController().signal);
+  const excludeMap = await buildExcludeMap(workspaceRoot, matches, neverAborted);
   assert.deepEqual(excludeMap, {
     shared: true,
     'workspace-a/config': true,
