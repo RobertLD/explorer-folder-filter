@@ -22,45 +22,73 @@
     "theme": "dark"
   },
   "engines": {
-    "vscode": "^1.70.0"
+    "vscode": "^1.74.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:explorerFilter.focus",
-    "onCommand:explorerFilter.clear",
-    "onCommand:explorerFilter.toggle"
+    "onStartupFinished"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Explorer Folder Filter reads folders directly from the file system."
+    }
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "explorerFilter.focus",
-        "title": "Focus Folder: Filter"
+        "title": "Filter",
+        "category": "Focus Folder",
+        "icon": "$(filter)"
       },
       {
         "command": "explorerFilter.clear",
-        "title": "Focus Folder: Clear Filter"
+        "title": "Clear Filter",
+        "category": "Focus Folder",
+        "icon": "$(filter-filled)"
       },
       {
         "command": "explorerFilter.toggle",
-        "title": "Focus Folder: Toggle Filter",
-        "icon": "$(filter)"
+        "title": "Toggle Filter",
+        "category": "Focus Folder"
+      },
+      {
+        "command": "explorerFilter.focusFolder",
+        "title": "Focus on This Folder",
+        "category": "Focus Folder"
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "explorerFilter.focusFolder",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
-          "command": "explorerFilter.toggle",
+          "command": "explorerFilter.focus",
           "when": "view == workbench.explorer.fileView && !explorerFolderFilter.active",
           "group": "navigation"
         },
         {
-          "command": "explorerFilter.toggle",
+          "command": "explorerFilter.clear",
           "when": "view == workbench.explorer.fileView && explorerFolderFilter.active",
           "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "explorerFilter.focusFolder",
+          "when": "explorerResourceIsFolder && !explorerResourceIsRoot",
+          "group": "4_search"
         }
       ]
     }
@@ -77,7 +105,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
-    "@types/vscode": "^1.70.0",
+    "@types/vscode": "~1.74.0",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.3.2",
     "esbuild": "^0.25.5",

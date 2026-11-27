@@ -2,21 +2,36 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const SKIPPED_DIRECTORIES = new Set(['.git', '.vscode', 'node_modules']);
+const MAX_CONCURRENT_DIRECTORY_READS = 16;
 
 export type ExcludeMap = Record<string, boolean>;
 
-export function findMatchingDirs(root: string, query: string): string[] {
+export class ScanCancelledError extends Error {
+  constructor() {
+    super('Folder scan was cancelled.');
+    this.name = 'ScanCancelledError';
+  }
+}
+
+export async function findMatchingDirs(root: string, query: string, signal: AbortSignal): Promise<string[]> {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) {
     return [];
   }
 
-  const matches: string[] = [];
-  walkDirectories(root, '', normalizedQuery, matches);
+  const matches = await walkDirectories(root, normalizedQuery, signal);
   return matches.sort(comparePaths);
 }
 
-export function buildExcludeMap(root: string, matchingPaths: string[]): ExcludeMap {
+export async function buildExcludeMap(
+  root: string,
+  matchingPaths: string[],
+  signal: AbortSignal,
+): Promise<ExcludeMap> {
+  if (matchingPaths.length === 0) {
+    throw new Error('buildExcludeMap requires at least one matching path.');
+  }
+
   const keep = buildKeepSet(matchingPaths);
   const matches = new Set(matchingPaths.map(toPosixPath));
   const exclude: ExcludeMap = {};
@@ -27,7 +42,8 @@ export function buildExcludeMap(root: string, matchingPaths: string[]): ExcludeM
     }
 
     const absoluteDir = path.join(root, relativeDir);
-    const children = readDirectoryChildren(absoluteDir)
+    const entries = await readDirectoryChildren(absoluteDir, signal);
+    const children = entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort((left, right) => left.localeCompare(right));
@@ -52,26 +68,58 @@ export function buildExcludeMap(root: string, matchingPaths: string[]): ExcludeM
   return exclude;
 }
 
-function walkDirectories(
+export function toWorkspaceRelativeDir(root: string, directory: string): string | undefined {
+  const relativeDir = path.relative(root, directory);
+  if (!relativeDir) {
+    return undefined;
+  }
+
+  if (relativeDir === '..' || relativeDir.startsWith(`..${path.sep}`) || path.isAbsolute(relativeDir)) {
+    return undefined;
+  }
+
+  return toPosixPath(relativeDir);
+}
+
+async function walkDirectories(root: string, normalizedQuery: string, signal: AbortSignal): Promise<string[]> {
+  const matches: string[] = [];
+  let frontier: string[] = [''];
+
+  while (frontier.length > 0) {
+    const nextFrontier: string[] = [];
+
+    for (let start = 0; start < frontier.length; start += MAX_CONCURRENT_DIRECTORY_READS) {
+      const batch = frontier.slice(start, start + MAX_CONCURRENT_DIRECTORY_READS);
+      const childNamesPerParent = await Promise.all(
+        batch.map((relativeDir) => readSearchableChildDirectoryNames(root, relativeDir, signal)),
+      );
+
+      for (let index = 0; index < batch.length; index += 1) {
+        for (const childName of childNamesPerParent[index]) {
+          const childPath = joinRelativePath(batch[index], childName);
+          nextFrontier.push(childPath);
+          if (childName.toLocaleLowerCase().includes(normalizedQuery)) {
+            matches.push(childPath);
+          }
+        }
+      }
+    }
+
+    frontier = nextFrontier;
+  }
+
+  return matches;
+}
+
+async function readSearchableChildDirectoryNames(
   root: string,
   relativeDir: string,
-  normalizedQuery: string,
-  matches: string[],
-): void {
-  const absoluteDir = path.join(root, relativeDir);
-
-  for (const entry of readDirectoryChildren(absoluteDir)) {
-    if (!entry.isDirectory() || SKIPPED_DIRECTORIES.has(entry.name)) {
-      continue;
-    }
-
-    const childPath = joinRelativePath(relativeDir, entry.name);
-    if (entry.name.toLocaleLowerCase().includes(normalizedQuery)) {
-      matches.push(childPath);
-    }
-
-    walkDirectories(root, childPath, normalizedQuery, matches);
-  }
+  signal: AbortSignal,
+): Promise<string[]> {
+  const entries = await readDirectoryChildren(path.join(root, relativeDir), signal);
+  return entries
+    .filter((entry) => entry.isDirectory() && !SKIPPED_DIRECTORIES.has(entry.name))
+    .map((entry) => entry.name);
 }
 
 function buildKeepSet(matchingPaths: string[]): Set<string> {
@@ -104,9 +152,13 @@ function formatGlobPath(value: string): string {
   return toPosixPath(value).split('/').map(escapeGlobSegment).join('/');
 }
 
-function readDirectoryChildren(directory: string): fs.Dirent[] {
+async function readDirectoryChildren(directory: string, signal: AbortSignal): Promise<fs.Dirent[]> {
+  if (signal.aborted) {
+    throw new ScanCancelledError();
+  }
+
   try {
-    return fs.readdirSync(directory, { withFileTypes: true });
+    return await fs.promises.readdir(directory, { withFileTypes: true });
   } catch (error) {
     if (isIgnorableFileSystemError(error)) {
       return [];
@@ -121,7 +173,7 @@ function isIgnorableFileSystemError(error: unknown): boolean {
     typeof error === 'object' &&
     error !== null &&
     'code' in error &&
-    (error.code === 'ENOENT' || error.code === 'EACCES' || error.code === 'EPERM')
+    (error.code === 'ENOENT' || error.code === 'ENOTDIR' || error.code === 'EACCES' || error.code === 'EPERM')
   );
 }
 
